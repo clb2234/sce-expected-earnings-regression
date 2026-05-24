@@ -1,0 +1,492 @@
+---
+title: ""
+format:
+  pdf:
+    documentclass: article
+    geometry: margin=1in
+    fontsize: 12pt
+    mainfont: "Times New Roman"
+    pdf-engine: xelatex
+execute:
+  echo: false
+---
+\begin{titlepage}
+\centering
+
+\vspace*{1.0in}
+
+{\Large\bfseries Expected Earnings in 10 Years: Associations With Age, Education, Work Status, and Household Income\par}
+
+\vspace{1.0in}
+
+{\large Carey Byron\par}
+
+\vspace{0.2in}
+
+{\large Columbia University\par}
+
+\vspace{0.2in}
+
+{\large UN2102: Applied Statistical Computing\par}
+
+\vspace{0.2in}
+
+{\large Professor Benjamin Goodrich\par}
+
+\vspace{0.2in}
+
+{\large May 21, 2026\par}
+
+\end{titlepage}
+
+\newpage
+
+\begin{center}
+\textbf{Abstract}
+\end{center}
+
+This analysis examines expected annual earnings at respondents’ current jobs 10 years into the future, reported in today’s dollars, using data from the Survey of Consumer Expectations and the Labor Market Survey. The two datasets were combined using the shared respondent identifier, allowing expected future earnings to be modeled as a function of age, education level, work status, and household income category. An ordinary least squares regression was estimated with expected future earnings as the outcome variable. The results indicate that education level and household income category are positively associated with expected earnings, while work status is negatively associated with expected earnings based on the coding used in the dataset. Age does not show a statistically significant relationship after accounting for the other predictors. The model explains a modest share of the variation in earnings expectations, suggesting that additional job-specific and labor-market characteristics would improve its explanatory power. Supplementary visualizations further illustrate that reported earnings expectations are highly dispersed, with a small number of extremely large values.
+
+\newpage
+
+## Datasets and Variables
+
+To analyze respondents’ expected annual earnings at their current job in 10 years, reported in today’s dollars without adjusting for inflation, two datasets were used and combined by the shared userid variable. The Survey of Consumer Expectations (SCE) dataset provided the explanatory variables of interest: Q32, the respondent’s current age; Q36, the respondent’s highest level of education completed; Q37, the respondent’s work status; and Q47, the respondent’s total household income during the past 12 months. These variables were selected because they describe factual characteristics of respondents’ present or past circumstances, rather than speculative expectations about the future, and they may reasonably be related to expected future earnings. Age may reflect career stage, education is often associated with earnings potential, work status may capture differences in current labor-market attachment, and household income captures broader current economic position.
+
+The Labor Market Survey data provided the outcome variable, L4b, which measures the annual earnings respondents expect to receive at their current job in 10 years if they remain in that job. After retaining the earliest Labor Market observation for each respondent and merging the Labor Market Survey data with the SCE dataset by userid, the combined dataset made it possible to estimate an OLS regression model examining how expected future earnings are associated with age, education, work status, and household income. In this analysis, L4b serves as the dependent variable, while Q32, Q36, Q37, and Q47 serve as the predictors.
+
+
+
+```{r}
+#| message: false
+#| warning: false
+
+library(dplyr)
+library(readxl)
+library(kableExtra)
+
+#read zero rows of data, but still read the column names
+sce_names <- readxl::read_xlsx("frbny-sce-public-microdata-latest.xlsx", n_max = 0)
+
+#create a set of instructions for read_xlsx() about how to import each column 
+#Repeat the word "guess" as many times as there are columns in sce_names
+col_types_sce <- rep("guess", length(names(sce_names)))
+```
+
+```{r}
+#returns the position numbers where condition is TRUE
+#returns the names of the items in an object
+#changes the import type for columns Q32, Q36, and Q42 from "guess" to "numeric"
+col_types_sce[which(names(sce_names) == "Q32")] <- "numeric"
+col_types_sce[which(names(sce_names) == "Q36")] <- "numeric"
+col_types_sce[which(names(sce_names) == "Q37")] <- "numeric"
+col_types_sce[which(names(sce_names) == "Q47")] <- "numeric"
+```
+
+```{r}
+library(dplyr)
+#reload data with numeric values
+#load full Excel file into an object called sce, while using custom col_types instructions:
+sce <- readxl::read_xlsx("frbny-sce-public-microdata-latest.xlsx", col_types = col_types_sce) 
+```
+
+```{r}
+sce <- sce |>
+#replace each column with an integer version of itself
+  mutate(
+    Q32 = as.integer(Q32),
+    Q36 = as.integer(Q36),
+    Q37 = as.integer(Q37),
+    Q47 = as.integer(Q47)
+  ) 
+```
+
+```{r}
+library(dplyr)
+library(kableExtra)
+```
+
+```{r}
+labor_names <- readxl::read_xlsx("sce-labor-microdata-public.xlsx", n_max = 0)
+```
+
+```{r}
+col_types_labor <- rep("guess", length(names(labor_names)))
+
+col_types_labor[which(names(labor_names) == "l4b")] <- "numeric"
+
+#reload data
+labor <- readxl::read_xlsx("sce-labor-microdata-public.xlsx", col_types = col_types_labor) 
+```
+
+```{r}
+labor <- labor |>
+  arrange(userid, date) |> #sort data by userid, then from earliest to latest date
+  group_by(userid) |> #treat each person seperately
+  slice_head(n = 1) |> #keep only the first row for each person
+  ungroup() #removes the grouping so labor behaves like a normal data frame afterward
+
+combined <- inner_join(sce, labor, by = "userid") 
+combined <- combined |>
+  filter(!is.na(l4b), !is.na(Q32), !is.na(Q36), !is.na(Q37), !is.na(Q47)) |>
+  filter(Q32 > 0) |>
+  select(userid, l4b, Q32, Q36, Q37, Q47) 
+
+```
+
+\vspace{0.2in}
+
+**Table 1**
+
+*First Five Complete Observations from the Combined Analysis Dataset*
+
+\vspace{-0.1in}
+
+```{r}
+#| results: asis
+#| echo: false
+#| message: false
+#| warning: false
+
+library(dplyr)
+
+dt <- combined |>
+  select(userid, l4b, Q32, Q36, Q37, Q47) |>
+  filter(
+    !is.na(l4b),
+    !is.na(Q32),
+    !is.na(Q36),
+    !is.na(Q37),
+    !is.na(Q47)
+  ) |>
+  head(5) |>
+  mutate(
+    userid = format(userid, scientific = FALSE, trim = TRUE),
+    l4b = paste0("\\$", format(round(l4b, 0), big.mark = ",", scientific = FALSE, trim = TRUE))
+  )
+
+cat("\\noindent\n")
+cat("\\begingroup\n")
+cat("\\fontsize{9}{11}\\selectfont\n")
+cat("\\begin{tabular*}{\\textwidth}{@{\\extracolsep{\\fill}} r r c c c c }\n")
+cat("\\hline\n")
+cat("User ID & \\shortstack{Expected\\\\Earnings\\\\in 10 Years} & Age & \\shortstack{Education\\\\Level Code} & \\shortstack{Work\\\\Status Code} & \\shortstack{Household Income\\\\Category Code} \\\\\n")
+cat("\\hline\n")
+
+for (i in 1:nrow(dt)) {
+  cat(
+    dt$userid[i], " & ",
+    dt$l4b[i], " & ",
+    dt$Q32[i], " & ",
+    dt$Q36[i], " & ",
+    dt$Q37[i], " & ",
+    dt$Q47[i], " \\\\\n",
+    sep = ""
+  )
+}
+
+cat("\\hline\n")
+cat("\\end{tabular*}\n")
+cat("\\endgroup\n")
+```
+
+\vspace{0.2in}
+
+**Interpretation of Table 1**
+
+Table 1 presents the first five complete observations from the combined analysis dataset. These rows illustrate the structure of the data used in the regression analysis, including the outcome variable, L4b, and the explanatory variables Q32, Q36, Q37, and Q47. Because education level, work status, and household income category are coded categorical variables, Table 1 reports their original numeric codes rather than descriptive labels. 
+
+Expected annual earnings at respondents' current job in 10 years vary substantially across these observations, ranging from $22,000 to $500,000. The respondents also differ in age, with values ranging from 29 to 60, and in education level, which ranges from category 4 to category 6. In these first five complete cases, the work status variable is consistently coded as 5, while household income category varies from 7 to 11. Overall, the table provides a brief snapshot of the variation in the combined dataset before the OLS regression model is estimated. 
+
+
+```{r}
+#Estimate a linear regression model predicting l4b using Q32, Q36, Q37, and Q47 from the dataset combined.
+model <- lm(l4b ~ Q32 + Q36 + Q37 + Q47, data = combined)
+```
+
+\newpage
+
+**Table 2**
+
+*OLS Regression Results Predicting Expected Annual Earnings in 10 Years*
+
+\vspace{-0.1in}
+
+```{r}
+#| results: asis
+#| echo: false
+#| message: false
+#| warning: false
+
+
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+reg_results <- as.data.frame(summary(model)$coefficients)
+ci <- as.data.frame(confint(model))
+
+reg_results$Variable <- rownames(reg_results)
+ci$Variable <- rownames(ci)
+
+names(ci)[1:2] <- c("CI_Lower", "CI_Upper")
+
+reg_results <- reg_results |>
+  left_join(ci, by = "Variable") |>
+  select(
+    Variable,
+    Estimate,
+    `Std. Error`,
+    `t value`,
+    `Pr(>|t|)`,
+    CI_Lower,
+    CI_Upper
+  )
+
+reg_results_table <- reg_results |>
+  mutate(
+    Variable = case_when(
+      Variable == "(Intercept)" ~ "Intercept",
+      Variable == "Q32" ~ "Age (Q32)",
+      Variable == "Q36" ~ "Education Level (Q36)",
+      Variable == "Q37" ~ "Work Status (Q37)",
+      Variable == "Q47" ~ "Household Income Category (Q47)",
+      TRUE ~ Variable
+    ),
+    Estimate = paste0("\\$", format(round(Estimate, 2), big.mark = ",", trim = TRUE)),
+    `Std. Error` = paste0("\\$", format(round(`Std. Error`, 2), big.mark = ",", trim = TRUE)),
+    CI_Lower = paste0("\\$", format(round(CI_Lower, 2), big.mark = ",", trim = TRUE)),
+    CI_Upper = paste0("\\$", format(round(CI_Upper, 2), big.mark = ",", trim = TRUE)),
+    `Pr(>|t|)` = format.pval(`Pr(>|t|)`, digits = 3, eps = 0.001)
+  )
+
+table2 <- reg_results_table |>
+  kbl(
+    format = "latex",
+    col.names = c(
+      "Predictor",
+      "Estimate",
+      "Std. Error",
+      "t-value",
+      "p-value",
+      "Lower 95\\% CI",
+      "Upper 95\\% CI"
+  ),
+  escape = FALSE,
+  align = c("l", "r", "r", "r", "r", "r", "r")
+) |>
+kable_styling(
+  full_width = FALSE,
+  font_size = 9,
+  latex_options = c("hold_position", "scale_down")
+)
+#latex_options = c("scale_down"): puts title before chart
+#latex_options = c("hold_position", "scale_down"): keeps table at its position
+
+
+table2
+```
+
+\vspace{0.2in}
+
+**Interpretation of Table 2**
+
+Table 2 reports the results of the OLS regression model predicting respondents’ expected annual earnings at their current job in 10 years, measured in today’s dollars. The predictors included age, education level, work status, and household income category. The estimated coefficients indicate how expected future earnings are predicted to change with a one-unit increase in each predictor, holding the other predictors constant.
+
+The coefficient for age is $368.88. This means that, after controlling for education level, work status, and household income category, each additional year of age is associated with a predicted increase of approximately $368.88 in expected annual earnings. However, this estimate is not statistically significant (p = 0.30151). The 95% confidence interval ranges from −$331.00 to $1,068.76, which includes zero. Together, the p-value and confidence interval indicate that the data do not provide statistically significant evidence of an association between age and expected future earnings once the other predictors are taken into account.
+
+The coefficient for education level is $9,828.96. Holding age, work status, and household income category constant, a one-category increase in education level is associated with a predicted increase of approximately $9,828.96 in expected annual earnings. This relationship is statistically significant (p = 0.00113). The 95% confidence interval ranges from $3,913.74 to $15,744.18, which remains entirely above zero. This suggests that higher educational attainment is positively associated with higher expected earnings at one’s current job in 10 years.
+
+The coefficient for work status is −$17,133.92. Holding age, education level, and household income category constant, a one-unit increase in the numeric work status code is associated with a predicted decrease of approximately $17,133.92 in expected annual earnings. This relationship is statistically significant (p < 0.001). The 95% confidence interval ranges from −$26,038.62 to −$8,229.23, which is entirely below zero. This indicates a statistically significant negative association between the work status coding used in the model and expected future earnings.
+
+The coefficient for household income category is $18,491.94. Holding age, education level, and work status constant, a one-category increase in household income is associated with a predicted increase of approximately $18,491.94 in expected annual earnings. This is the largest positive estimated effect among the predictors and is highly statistically significant (p < 0.001). The 95% confidence interval ranges from $14,908.96 to $22,074.93, indicating a clearly positive association between household income category and expected future earnings.
+
+The intercept is −$23,636.90, representing the model’s predicted expected earnings when age, education level, work status, and household income category are all equal to zero. Because zero is not a substantively meaningful value for these predictors in this context, the intercept is not directly meaningful for interpretation and is mainly included as part of the regression equation.
+
+Overall, Table 2 suggests that education level, work status, and household income category are statistically significant predictors of expected annual earnings in 10 years, whereas age is not a statistically significant predictor after controlling for the other variables in the model. The results indicate that respondents’ educational background, current work status coding, and broader household economic position are more strongly related to their expectations about future earnings than age alone.
+
+\vspace{0.2in}
+
+# Analysis
+
+## *Estimated OLS Regression Model*
+
+An OLS regression model was estimated to examine how expected annual earnings at one’s current job in 10 years, L4b, are associated with age, Q32, education level, Q36, work status, Q37, and household income category, Q47. The estimated model was:
+
+L4b = −23,636.90 + 368.88 (Q32) + 9,828.96 (Q36) − 17,133.92 (Q37) + 18,491.94 (Q47)
+
+The model indicates that, holding the other predictors constant, education level and household income category are positively associated with expected future earnings, while work status has a negative estimated coefficient. Age has a positive estimated coefficient, but it is not statistically significant. The model explains approximately 3.9% of the variation in expected earnings (R^2 = 0.03875).
+
+## *Interpretation of the Age Coefficient*
+
+The coefficient on age, Q32, is 368.88. This means that, holding education level, work status, and household income category constant, each additional year of age is associated with a predicted increase of approximately $368.88 in expected annual earnings at one’s current job in 10 years.
+
+However, this estimate is not statistically significant, with a p-value of 0.30151. Therefore, the model does not provide statistically significant evidence of an association between age and expected future earnings after accounting for education level, work status, and household income category.
+
+## *Interpretation of 95% Confidence Intervals for the Other Predictors*
+
+The 95% confidence interval for Q36, education level, is:
+
+[3,913.74, 15,744.18]
+
+This indicates that, holding age, work status, and household income category constant, a one-category increase in education level is associated with an estimated increase in expected annual earnings between approximately $3,914 and $15,744. Because this interval does not include 0, the association is statistically significant at the 5% level.
+
+The 95% confidence interval for Q37, work status, is:
+
+[−26,038.62, −8,229.23]
+
+This indicates that, holding age, education level, and household income category constant, a one-unit increase in the coded work status variable is associated with an estimated decrease in expected annual earnings between approximately $8,229 and $26,039. Because this interval does not include 0, the association is statistically significant at the 5% level. Since work status is a coded categorical variable, this coefficient should be interpreted cautiously in terms of movement across the variable’s numerical coding rather than as a directly continuous quantity.
+
+The 95% confidence interval for Q47, household income category, is:
+
+[14,908.96, 22,074.93]
+
+This indicates that, holding age, education level, and work status constant, a one-category increase in household income category is associated with an estimated increase in expected annual earnings between approximately $14,909 and $22,075. Because this interval also does not include 0, the association is statistically significant at the 5% level.
+
+Since Q36 and Q47 are coded as ordered categories, these interpretations should be understood as changes associated with moving up by one coded category, rather than equal real-world increases in credentials or dollar income.
+
+
+\newpage
+
+**Figure 1**  
+*Scatterplot of Expected Annual Earnings in 10 Years by Age*
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-width: 8
+#| fig-height: 4.5
+#| out-width: "95%"
+
+library(ggplot2)
+library(scales)
+
+ggplot(combined, aes(x = Q32, y = l4b)) + 
+  geom_point(
+    color = "gray40",
+    alpha = 0.45,
+    size = 1.5
+  ) +
+  geom_smooth(
+    method = "lm", 
+    se = FALSE,
+    color = "darkorange2",
+    linewidth = 1
+  ) + 
+  coord_cartesian(ylim = c(0, 5000000)) +
+  scale_y_continuous(
+    labels = label_dollar(accuracy = 1), 
+    breaks = seq(0, 5000000, by = 1000000)
+  ) +
+  labs(
+    x = "Age", 
+    y = "Expected Annual Earnings in 10 Years (USD)"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "#eef5fb", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_line(color = "gray80"),
+    panel.grid.minor = element_blank(),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    plot.margin = margin(t = 10, r = 10, b = 10, l = 45)
+  )
+```
+\vspace{-0.1in}
+\footnotesize \textit{Note.} The y-axis was zoomed to improve readability because a small number of respondents reported extremely high expected earnings. The fitted regression line was still estimated using the full dataset.
+
+\vspace{0.1in}
+
+**Figure 2**  
+*Scatterplot of Expected Annual Earnings in 10 Years by Age Using a Pseudo-Log Y-Axis*
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-width: 8
+#| fig-height: 4.5
+#| out-width: "95%"
+
+ggplot(combined, aes(x = Q32, y = l4b)) +
+  geom_point(
+    color = "gray40",
+    alpha = 0.45,
+    size = 1.5
+  ) +
+  geom_smooth(
+    method = "lm",
+    se = FALSE,
+    color = "darkorange2",
+    linewidth = 1
+  ) +
+  scale_y_continuous(
+    transform = transform_pseudo_log(sigma = 100000, base = 10),
+    breaks = c(
+      0,
+      100000,
+      250000,
+      500000,
+      1000000,
+      2000000,
+      5000000,
+      10000000
+    ),
+    labels = label_dollar(accuracy = 1)
+  ) +
+  labs(
+    x = "Age",
+    y = "Expected Earnings in 10 Years (USD)"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "#eef5fb", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_line(color = "gray80"),
+    panel.grid.minor = element_blank(),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    plot.margin = margin(t = 10, r = 10, b = 10, l = 45)
+  )
+```
+\vspace{-0.1in}
+\footnotesize \textit{Note.} This scale improves readability while still displaying respondents who reported extremely high expected earnings.
+
+\vspace{0.2in}
+
+## ***Scatterplot Slope Compared with the Multiple Regression Estimate***
+
+The scatterplots show that expected annual earnings vary widely across nearly all ages, with most observations concentrated at lower earnings levels and a smaller number of respondents reporting much higher expected earnings. In the pseudo-log version of the plot, the middle of the distribution is easier to see because the y-axis compresses the extremely high earnings values while still showing the full range of responses. Overall, the visual pattern suggests that expected earnings vary substantially within age groups rather than following a strong age-based trend.
+
+The fitted line in Figure 1 comes from an age-only regression and has a slope of −329.20 (p = 0.314, R^2 = 0.0002481). This means that, without controlling for any other variables, each additional year of age is associated with a predicted decrease of approximately $329.20 in expected annual earnings at one’s current job in 10 years. However, this relationship is very weak and not statistically significant.
+
+This differs from the age coefficient in the multiple regression model, which was 368.88 after controlling for education level, work status, and household income category. In the simple regression, the age slope is slightly negative, while in the multiple regression, the age coefficient is slightly positive. This difference occurs because the line in the scatterplot reflects the unadjusted bivariate relationship between age and expected earnings, whereas the multiple regression coefficient reflects the relationship between age and expected earnings while holding Q36, Q37, and Q47 constant. Once these additional predictors are included, the estimated association between age and expected earnings changes direction.
+
+Figure 1 displays this relationship on the original dollar scale and includes the straight OLS line that minimizes the sum of squared residuals. Because a small number of respondents reported extremely high expected earnings, the y-axis was zoomed to improve readability, while the fitted regression line was still estimated using the full dataset. Figure 2 presents the same relationship using a pseudo-log y-axis, which makes the lower and middle ranges of expected earnings easier to examine while still displaying very high reported values.
+
+## ***Interpretation of the p-Value for Age***
+
+The p-value associated with the age coefficient in the multiple regression model is 0.30151. This p-value tests the null hypothesis that the true coefficient on age is zero, holding education level, work status, and household income category constant.
+
+Because 0.30151 is greater than the conventional 0.05 significance level, the null hypothesis cannot be rejected. Therefore, the model does not provide statistically significant evidence that age is associated with expected annual earnings at one’s current job in 10 years after controlling for education level, work status, and household income category.
+
+Although the estimated coefficient on age is positive, $368.88, the estimate is not statistically distinguishable from zero.
+
+## ***Usefulness of the Model and Possible Improvements***
+
+The regression model is useful because it quantifies how expected annual earnings at one’s current job in 10 years are associated with age, education level, work status, and household income category. It shows that education level and household income category are positively associated with expected future earnings, while work status has a negative association based on the coding used in the dataset. Age, however, does not appear to have a statistically significant association once the other variables are taken into account.
+
+At the same time, the model explains only about 3.9% of the variation in expected earnings, as indicated by the model’s $R^2$ value of 0.03875. This suggests that important determinants of expected future earnings are not captured by the predictors included in the model. The model could be made more useful by incorporating variables more directly tied to labor-market outcomes, such as current annual earnings, occupation, industry, years of work experience, job tenure, hours worked, full-time versus part-time status, region, and promotion opportunities.
+
+The model could also be improved by treating education level, work status, and household income category as categorical variables rather than assuming that each one-unit increase has the same linear effect. That adjustment would allow for more flexible comparisons across education levels, work-status categories, and income brackets. Overall, the model provides a useful first step in describing patterns in expected future earnings, but it should be interpreted as an associational model rather than as evidence of causal effects.
+
+\vspace{0.2in}
+
+## Conclusion
+
+This analysis examined how expected annual earnings at respondents’ current jobs in 10 years are associated with age, education level, work status, and household income category. The results show that education level and household income category are statistically significant positive predictors of expected future earnings, while work status is a statistically significant negative predictor based on the coding used in the dataset. In contrast, age is not significantly associated with expected earnings after controlling for education level, work status, and household income category. The scatterplots similarly suggest only a weak unadjusted relationship between age and expected earnings, with substantial variation in expected earnings across respondents of similar ages.
+
+Although the model identifies several meaningful associations, it explains only a modest share of the variation in earnings expectations, with an $R^2$ value of approximately 0.039. This indicates that additional factors, such as current earnings, occupation, industry, work experience, job tenure, hours worked, full-time versus part-time status, region, and promotion opportunities, may be important for understanding how respondents form expectations about their future earnings. Overall, the findings suggest that respondents’ educational background, work status, and household economic position are more strongly related to expected future earnings than age alone, while also highlighting the limits of a relatively simple regression model.
+
